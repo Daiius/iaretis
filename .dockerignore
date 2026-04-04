@@ -1,0 +1,7 @@
+target/
+blocklist.txt
+wg-config/
+.git/
+.gitignore
+.dockerignore
+initial-plan.md
