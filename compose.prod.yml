@@ -1,0 +1,6 @@
+services:
+  iaretis:
+    build:
+      dockerfile: Dockerfile.prod
+    environment:
+      - RUST_LOG=iaretis=warn

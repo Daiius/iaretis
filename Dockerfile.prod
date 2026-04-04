@@ -1,0 +1,14 @@
+FROM rust:latest AS builder
+
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY src/ src/
+RUN cargo build --release
+
+FROM gcr.io/distroless/cc:latest
+WORKDIR /app
+COPY --from=builder /app/target/release/iaretis ./
+ENV LISTEN_ADDR=0.0.0.0:53
+ENV FILTER_FILE=/etc/iaretis/blocklist.txt
+EXPOSE 53/udp 53/tcp
+CMD ["/app/iaretis"]
