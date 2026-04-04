@@ -103,9 +103,26 @@ impl RequestHandler for AdlibitumHandler {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(domain, "upstream resolve failed: {e}");
+                    // NoRecordsFound はレコードが存在しないだけなので
+                    // 上流の response_code をそのまま返す（HTTPS レコード未対応等）
+                    let response_code = match e.proto() {
+                        Some(proto) => match proto.kind() {
+                            hickory_proto::ProtoErrorKind::NoRecordsFound { response_code, .. } => {
+                                tracing::debug!(domain, %response_code, "no records found");
+                                *response_code
+                            }
+                            _ => {
+                                tracing::warn!(domain, "upstream resolve failed: {e}");
+                                ResponseCode::ServFail
+                            }
+                        },
+                        None => {
+                            tracing::warn!(domain, "upstream resolve failed: {e}");
+                            ResponseCode::ServFail
+                        }
+                    };
                     let builder = MessageResponseBuilder::from_message_request(request);
-                    let response = builder.error_msg(request.header(), ResponseCode::ServFail);
+                    let response = builder.error_msg(request.header(), response_code);
                     match response_handle.send_response(response).await {
                         Ok(info) => info,
                         Err(_) => serve_failed(),
