@@ -3,21 +3,6 @@
 version = 4
 
 [[package]]
-name = "adlibitum"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "hickory-proto",
- "hickory-resolver",
- "hickory-server",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -364,6 +349,21 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "iaretis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hickory-proto",
+ "hickory-resolver",
+ "hickory-server",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

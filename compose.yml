@@ -1,44 +1,15 @@
 services:
-  wireguard:
-    image: lscr.io/linuxserver/wireguard:latest
-    container_name: wireguard
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - SERVERURL=${WG_SERVERURL:?Set WG_SERVERURL to your server's public IP or domain}
-      - PEERS=${WG_PEERS:-iphone}
-      - PEERDNS=10.13.13.100
-    volumes:
-      - ./wg-config:/config
+  iaretis:
+    build:
+      dockerfile: Dockerfile
+    container_name: iaretis
     ports:
-      - "51820:51820/udp"
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-    restart: unless-stopped
-    networks:
-      vpn:
-        ipv4_address: 10.13.13.1
-
-  adlibitum:
-    build: .
-    container_name: adlibitum
+      - "${DNS_BIND_ADDR:-127.0.0.1}:53:53/udp"
+      - "${DNS_BIND_ADDR:-127.0.0.1}:53:53/tcp"
     environment:
       - LISTEN_ADDR=0.0.0.0:53
-      - FILTER_FILE=/etc/adlibitum/blocklist.txt
-      - RUST_LOG=adlibitum=info
+      - FILTER_FILE=/etc/iaretis/blocklist.txt
+      - RUST_LOG=iaretis=info
     volumes:
-      - ./blocklist.txt:/etc/adlibitum/blocklist.txt:ro
+      - ./blocklist.txt:/etc/iaretis/blocklist.txt:ro
     restart: unless-stopped
-    networks:
-      vpn:
-        ipv4_address: 10.13.13.100
-
-networks:
-  vpn:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 10.13.13.0/24
