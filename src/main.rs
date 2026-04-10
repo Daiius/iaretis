@@ -42,5 +42,5 @@ async fn main() -> anyhow::Result<()> {
     let forwarder = Forwarder::new();
     let handler = AdlibitumHandler::new(filter, forwarder);
 
-    server::run(handler, config.listen_addr).await
+    server::run(handler, config.listen_addr, config.doh).await
 }

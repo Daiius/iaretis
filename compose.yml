@@ -6,10 +6,9 @@ services:
     ports:
       - "${DNS_BIND_ADDR:-127.0.0.1}:53:53/udp"
       - "${DNS_BIND_ADDR:-127.0.0.1}:53:53/tcp"
-    environment:
-      - LISTEN_ADDR=0.0.0.0:53
-      - FILTER_FILE=/etc/iaretis/blocklist.txt
-      - RUST_LOG=iaretis=info
+      - "0.0.0.0:8443:8443/tcp"
+    env_file:
+      - .env
     volumes:
       - ./blocklist.txt:/etc/iaretis/blocklist.txt:ro
     restart: unless-stopped
