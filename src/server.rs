@@ -5,31 +5,38 @@ use std::time::Duration;
 use hickory_server::ServerFuture;
 use rustls::crypto::ring::default_provider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use tokio::net::{TcpListener, UdpSocket};
+use tokio_rustls::TlsAcceptor;
 
 use crate::config::DohConfig;
 use crate::handler::AdlibitumHandler;
 
+fn build_tls_acceptor(config: &DohConfig) -> anyhow::Result<TlsAcceptor> {
+    let cert_chain = CertificateDer::pem_file_iter(&config.cert_path)?
+        .collect::<Result<Vec<_>, _>>()?;
+    let key = PrivateKeyDer::from_pem_file(&config.key_path)?;
+    let certified_key = CertifiedKey::from_der(cert_chain, key, &default_provider())?;
+
+    let mut server_config = rustls::ServerConfig::builder_with_provider(Arc::new(default_provider()))
+        .with_safe_default_protocol_versions()?
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(SingleCertResolver(Arc::new(certified_key))));
+    server_config.alpn_protocols = vec![b"h2".to_vec()];
+
+    Ok(TlsAcceptor::from(Arc::new(server_config)))
+}
+
 #[derive(Debug)]
 struct SingleCertResolver(Arc<CertifiedKey>);
 
-impl ResolvesServerCert for SingleCertResolver {
+impl rustls::server::ResolvesServerCert for SingleCertResolver {
     fn resolve(
         &self,
         _client_hello: rustls::server::ClientHello<'_>,
     ) -> Option<Arc<CertifiedKey>> {
         Some(self.0.clone())
     }
-}
-
-fn load_cert_resolver(config: &DohConfig) -> anyhow::Result<Arc<dyn ResolvesServerCert>> {
-    let cert_chain = CertificateDer::pem_file_iter(&config.cert_path)?
-        .collect::<Result<Vec<_>, _>>()?;
-    let key = PrivateKeyDer::from_pem_file(&config.key_path)?;
-    let certified_key = CertifiedKey::from_der(cert_chain, key, &default_provider())?;
-    Ok(Arc::new(SingleCertResolver(Arc::new(certified_key))))
 }
 
 pub async fn run(
@@ -48,16 +55,32 @@ pub async fn run(
     tracing::info!(%listen_addr, "DNS server listening (UDP/TCP)");
 
     if let Some(doh) = &doh_config {
-        let cert_resolver = load_cert_resolver(doh)?;
+        let tls_acceptor = build_tls_acceptor(doh)?;
         let https_listener = TcpListener::bind(doh.listen_addr).await?;
-        server.register_https_listener(
+        let endpoint: Arc<str> = Arc::from(doh.endpoint.as_str());
+
+        tracing::info!(
+            listen_addr = %doh.listen_addr,
+            endpoint = %doh.endpoint,
+            "DoH server listening (HTTPS)"
+        );
+
+        // DoH サーバーを別タスクで起動（DNS サーバーに UDP でプロキシ）
+        // listen_addr が 0.0.0.0 の場合は 127.0.0.1 に変換
+        let dns_proxy_addr = SocketAddr::new(
+            match listen_addr.ip() {
+                std::net::IpAddr::V4(ip) if ip.is_unspecified() => std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                std::net::IpAddr::V6(ip) if ip.is_unspecified() => std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+                ip => ip,
+            },
+            listen_addr.port(),
+        );
+        tokio::spawn(crate::doh::run(
             https_listener,
-            Duration::from_secs(5),
-            cert_resolver,
-            doh.dns_hostname.clone(),
-            doh.endpoint.clone(),
-        )?;
-        tracing::info!(listen_addr = %doh.listen_addr, endpoint = %doh.endpoint, "DoH server listening (HTTPS)");
+            tls_acceptor,
+            endpoint,
+            dns_proxy_addr,
+        ));
     }
 
     server.block_until_done().await?;

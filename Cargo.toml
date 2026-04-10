@@ -4,13 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hickory-server = { version = "0.25", features = ["https-ring"] }
+hickory-server = "0.25"
 hickory-resolver = "0.25"
 hickory-proto = "0.25"
 anyhow = "1"
 async-trait = "0.1"
+base64 = "0.22"
+bytes = "1"
+h2 = "0.4"
+http = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
