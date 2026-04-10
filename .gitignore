@@ -2,3 +2,4 @@
 blocklist*.txt
 wg-config/
 .env
+dev-*.pem
