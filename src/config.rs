@@ -11,7 +11,6 @@ pub struct DohConfig {
     pub listen_addr: SocketAddr,
     pub cert_path: PathBuf,
     pub key_path: PathBuf,
-    pub dns_hostname: Option<String>,
     pub endpoint: String,
 }
 
@@ -41,7 +40,6 @@ impl Config {
                     listen_addr: addr.parse().expect("invalid DOH_LISTEN_ADDR"),
                     cert_path: PathBuf::from(cert),
                     key_path: PathBuf::from(key),
-                    dns_hostname: std::env::var("DOH_HOSTNAME").ok(),
                     endpoint,
                 })
             }
