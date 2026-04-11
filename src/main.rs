@@ -1,5 +1,4 @@
 mod config;
-mod doh;
 mod filter;
 mod forwarder;
 mod handler;
@@ -10,7 +9,7 @@ use std::sync::Arc;
 use config::Config;
 use filter::Filter;
 use forwarder::Forwarder;
-use handler::AdlibitumHandler;
+use handler::IaretisHandler;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -41,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
 
     let filter = Arc::new(filter);
     let forwarder = Forwarder::new();
-    let handler = AdlibitumHandler::new(filter, forwarder);
+    let handler = IaretisHandler::new(filter, forwarder);
 
     server::run(handler, config.listen_addr, config.doh).await
 }

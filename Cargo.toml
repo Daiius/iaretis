@@ -4,23 +4,24 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hickory-server = "0.25"
-hickory-resolver = "0.25"
-hickory-proto = "0.25"
+hickory-server = { version = "0.26.0-beta.3", features = ["https-ring"] }
+hickory-resolver = { version = "0.26.0-beta.3", features = ["tls-ring"] }
+hickory-proto = "0.26.0-beta.3"
 anyhow = "1"
 async-trait = "0.1"
-base64 = "0.22"
-bytes = "1"
-h2 = "0.4"
-http = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 tokio = { version = "1", features = ["full"] }
-tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+[patch.crates-io]
+hickory-net = { git = "https://github.com/Daiius/hickory-dns.git", branch = "feature/doh-get" }
+hickory-proto = { git = "https://github.com/Daiius/hickory-dns.git", branch = "feature/doh-get" }
+hickory-server = { git = "https://github.com/Daiius/hickory-dns.git", branch = "feature/doh-get" }
+hickory-resolver = { git = "https://github.com/Daiius/hickory-dns.git", branch = "feature/doh-get" }
 
 [profile.release]
 lto = true
