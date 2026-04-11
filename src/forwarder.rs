@@ -12,7 +12,7 @@ pub struct Forwarder {
 impl Forwarder {
     pub fn new() -> Self {
         let resolver = Resolver::builder_with_config(
-            ResolverConfig::udp_and_tcp(&CLOUDFLARE),
+            ResolverConfig::tls(&CLOUDFLARE),
             TokioRuntimeProvider::default(),
         )
         .build()
