@@ -1,5 +1,4 @@
 mod config;
-mod doh;
 mod filter;
 mod forwarder;
 mod handler;
