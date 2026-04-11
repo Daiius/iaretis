@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      push:
+        description: "Push image to registry"
+        type: boolean
+        default: true
 
 env:
   IMAGE_NAME: ghcr.io/daiius/iaretis
@@ -24,11 +29,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate tags
+        id: tags
+        run: |
+          TAGS="${IMAGE_NAME}:${{ github.sha }}"
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            TAGS="${TAGS},${IMAGE_NAME}:latest"
+          else
+            BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+            TAGS="${TAGS},${IMAGE_NAME}:${BRANCH}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.prod
-          push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          push: ${{ github.ref_name == 'main' || inputs.push }}
+          tags: ${{ steps.tags.outputs.tags }}
