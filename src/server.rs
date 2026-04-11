@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hickory_server::ServerFuture;
+use hickory_server::Server;
 use rustls::crypto::ring::default_provider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use rustls::sign::CertifiedKey;
@@ -10,7 +10,7 @@ use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls::TlsAcceptor;
 
 use crate::config::DohConfig;
-use crate::handler::AdlibitumHandler;
+use crate::handler::IaretisHandler;
 
 fn build_tls_acceptor(config: &DohConfig) -> anyhow::Result<TlsAcceptor> {
     let cert_chain = CertificateDer::pem_file_iter(&config.cert_path)?
@@ -40,11 +40,11 @@ impl rustls::server::ResolvesServerCert for SingleCertResolver {
 }
 
 pub async fn run(
-    handler: AdlibitumHandler,
+    handler: IaretisHandler,
     listen_addr: SocketAddr,
     doh_config: Option<DohConfig>,
 ) -> anyhow::Result<()> {
-    let mut server = ServerFuture::new(handler);
+    let mut server = Server::new(handler);
 
     let udp_socket = UdpSocket::bind(listen_addr).await?;
     server.register_socket(udp_socket);

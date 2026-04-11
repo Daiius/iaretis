@@ -138,6 +138,7 @@ fn extract_from_query_param(uri: &http::Uri) -> Result<Vec<u8>, String> {
 }
 
 async fn extract_from_body(mut body: h2::RecvStream) -> Result<Vec<u8>, String> {
+    const MAX_DNS_MESSAGE_SIZE: usize = 8192;
     let mut data = Vec::new();
     while let Some(chunk) = body.data().await {
         let chunk = chunk.map_err(|e| format!("body read error: {e}"))?;
@@ -145,6 +146,9 @@ async fn extract_from_body(mut body: h2::RecvStream) -> Result<Vec<u8>, String> 
         body.flow_control()
             .release_capacity(chunk.len())
             .map_err(|e| format!("flow control error: {e}"))?;
+        if data.len() > MAX_DNS_MESSAGE_SIZE {
+            return Err(format!("body too large (>{MAX_DNS_MESSAGE_SIZE} bytes)"));
+        }
     }
     Ok(data)
 }
