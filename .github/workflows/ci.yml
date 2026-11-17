@@ -1,0 +1,49 @@
+name: CI
+
+# PR と main への push で、ビルド・テスト・clippy を流す。
+# fork からの PR でも秘密を渡さない: pull_request（pull_request_target ではない）+ 読み取りだけの権限。
+# cargo fmt --check は、既存コードの整形をそろえてから足す（今は差分があり落ちる）。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # 第三者の action はコミットの SHA で固定する。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # rust-toolchain.toml も rust-version も無いので stable（edition 2024 は 1.85 以降）。
+      - name: Install Rust (stable)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      # Cargo.toml の [patch.crates-io] が hickory のフォーク（公開リポジトリ）を git で取る。
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
