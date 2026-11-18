@@ -10,6 +10,13 @@ on:
         type: boolean
         default: true
 
+# 本番の VPS は `latest` を追いかけて自動で入れ替える。同じ ref のビルドは直列にし、
+# 古いコミットのビルドがあとから `latest` を上書きしないようにする（待っている回は新しい回が来れば取り消される）。
+# 走っている回は打ち切らない: push の途中で止めると、タグの一部だけが付け替わった状態が残りうる。
+concurrency:
+  group: build-push-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   IMAGE_NAME: ghcr.io/daiius/iaretis
 
@@ -29,13 +36,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # `latest`（本番が追いかけるタグ）は、main の回で、このコミットがいまのリモートの main の先頭のときだけ付ける。
+      # 古い回の再実行や、直列待ちの間に main が進んだ回が `latest` を戻さないように。
+      # paths の絞りが無く、main への push は文書だけでも毎回起動するので、先頭の回が必ず付ける（取りこぼさない）。
+      # 先頭を取れないときは安全側で付けない。結果と理由は実行の Summary に 1 行出す。
       - name: Generate tags
         id: tags
         run: |
           TAGS="${IMAGE_NAME}:${{ github.sha }}"
           if [ "${{ github.ref_name }}" = "main" ]; then
-            TAGS="${TAGS},${IMAGE_NAME}:latest"
+            if HEAD_SHA=$(git ls-remote --exit-code origin refs/heads/main | cut -f1) && [ -n "$HEAD_SHA" ]; then
+              :
+            else
+              HEAD_SHA=""
+            fi
+            if [ "$HEAD_SHA" = "${{ github.sha }}" ]; then
+              TAGS="${TAGS},${IMAGE_NAME}:latest"
+              echo "latest を付ける: main の先頭（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
+            elif [ -z "$HEAD_SHA" ]; then
+              echo "latest を付けない: リモートの main の先頭を取得できない（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "latest を付けない: main の先頭（${HEAD_SHA}）ではない（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
           else
+            echo "latest を付けない: main の回ではない（${{ github.ref_name }}）" | tee -a "$GITHUB_STEP_SUMMARY"
             BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
             TAGS="${TAGS},${IMAGE_NAME}:${BRANCH}"
           fi
