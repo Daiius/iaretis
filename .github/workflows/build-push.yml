@@ -10,6 +10,13 @@ on:
         type: boolean
         default: true
 
+# 本番の VPS は `latest` を追いかけて自動で入れ替える。同じ ref のビルドは直列にし、
+# 古いコミットのビルドがあとから `latest` を上書きしないようにする（待っている回は新しい回が来れば取り消される）。
+# 走っている回は打ち切らない: push の途中で止めると、タグの一部だけが付け替わった状態が残りうる。
+concurrency:
+  group: build-push-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   IMAGE_NAME: ghcr.io/daiius/iaretis
 
