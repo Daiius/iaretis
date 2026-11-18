@@ -10,19 +10,18 @@ on:
         type: boolean
         default: true
 
-# 本番の VPS は `latest` を追いかけて自動で入れ替える。同じ ref のビルドは直列にし、
-# 古いコミットのビルドがあとから `latest` を上書きしないようにする（待っている回は新しい回が来れば取り消される）。
-# 走っている回は打ち切らない: push の途中で止めると、タグの一部だけが付け替わった状態が残りうる。
-concurrency:
-  group: build-push-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   IMAGE_NAME: ghcr.io/daiius/iaretis
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # 同じコミットの回（push と手動起動の重複・再実行）だけを直列にする。ほかのコミットのビルドは並んで走ってよい
+    # （latest を動かすのは下の job「promote」で、そちらはコミットに依らない突き合わせを、固定の group で直列に行う）。
+    # 走っている回は打ち切らない: push の途中で止めると、半端な状態が残りうる。
+    concurrency:
+      group: build-push-${{ github.sha }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -36,30 +35,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `latest`（本番が追いかけるタグ）は、main の回で、このコミットがいまのリモートの main の先頭のときだけ付ける。
-      # 古い回の再実行や、直列待ちの間に main が進んだ回が `latest` を戻さないように。
-      # paths の絞りが無く、main への push は文書だけでも毎回起動するので、先頭の回が必ず付ける（取りこぼさない）。
-      # 先頭を取れないときは安全側で付けない。結果と理由は実行の Summary に 1 行出す。
+      # ここで push するのは `<SHA>`（と main 以外の枝ではその枝の名前）だけ。
+      # `latest` は、この回のあとの job「promote」が、main の先頭に突き合わせて動かす。
       - name: Generate tags
         id: tags
         run: |
           TAGS="${IMAGE_NAME}:${{ github.sha }}"
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            if HEAD_SHA=$(git ls-remote --exit-code origin refs/heads/main | cut -f1) && [ -n "$HEAD_SHA" ]; then
-              :
-            else
-              HEAD_SHA=""
-            fi
-            if [ "$HEAD_SHA" = "${{ github.sha }}" ]; then
-              TAGS="${TAGS},${IMAGE_NAME}:latest"
-              echo "latest を付ける: main の先頭（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
-            elif [ -z "$HEAD_SHA" ]; then
-              echo "latest を付けない: リモートの main の先頭を取得できない（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
-            else
-              echo "latest を付けない: main の先頭（${HEAD_SHA}）ではない（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            echo "latest を付けない: main の回ではない（${{ github.ref_name }}）" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.ref_name }}" != "main" ]; then
             BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
             TAGS="${TAGS},${IMAGE_NAME}:${BRANCH}"
           fi
@@ -71,3 +53,90 @@ jobs:
           file: Dockerfile.prod
           push: ${{ github.ref_name == 'main' || inputs.push }}
           tags: ${{ steps.tags.outputs.tags }}
+
+  # `latest`（本番が追いかけるタグ）を動かす job。ビルドと SHA のタグの push が済んだ回のあとに走る。
+  # この job は「この回のコミット」ではなく、その時点の main の先頭 T に latest を突き合わせる:
+  #   - paths の絞りが無く、main への push は毎回ビルドされるので、latest が指すべき版は main の先頭 T
+  #   - T の SHA のタグのイメージがあれば、それに latest を向ける。無ければ（T のビルドがまだ終わっていない・失敗した）
+  #     何もしない。T の回が終われば、その回が付ける。T のビルドが失敗していれば、T の回を再実行すれば付く（Summary に出る）
+  #   どの回のこの job も同じ突き合わせをするので、古い回の再実行でも latest は戻らず、待っていた回が
+  #   取り消されても害が無い（生き残った回が、より新しい main で同じ突き合わせをする）。
+  # 固定の group で直列にする（判定と付与の間に、別の回の付与が割り込まない）。走っている回は打ち切らない。
+  # main 以外の枝の回では走らせない（突き合わせるだけなので害は無いが、枝の回が latest に触れないと分かる方がよい）。
+  # 突き合わせられないとき（main の先頭を取れない・レジストリを確かめられない）は、
+  # latest を動かさずに失敗で終える。結果と理由は実行の Summary に出す。
+  promote:
+    needs: build-and-push
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    concurrency:
+      group: build-push-promote
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # main の先頭はリモートに問い合わせる（git ls-remote）ので、履歴は要らない。
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Point latest at the build that main should run
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          TAG_PREFIX: ''
+        run: |
+          # Actions の bash は -e -o pipefail で動く。失敗を判定に使うコマンドは if / || で受ける。
+          set -u
+          note() { echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          fail() { note "latest を動かさない（失敗）: $1"; exit 1; }
+          errf=$(mktemp)
+          # inspect <参照>: 標準出力にダイジェスト。終了コードは 0 = ある・1 = 無い・2 = 確かめられない（レジストリの不調など）。
+          # 「無い」は、エラーの文に not found / manifest unknown があるときだけとみなす。それ以外は「確かめられない」。
+          # 取り違えても安全側: 本当は無いのに「確かめられない」なら失敗で終わるだけ、本当は不調なのに「無い」なら動かさないだけ。
+          inspect() {
+            local out rc=0
+            out=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$1" 2>"$errf") || rc=$?
+            if [ "$rc" -eq 0 ] && [ -n "$out" ]; then printf '%s' "$out"; return 0; fi
+            if grep -qiE 'not found|manifest unknown' "$errf"; then return 1; fi
+            cat "$errf" >&2
+            return 2
+          }
+
+          if ! head=$(git ls-remote --exit-code origin "refs/heads/$DEFAULT_BRANCH" | cut -f1) || [ -z "$head" ]; then
+            fail "リモートの $DEFAULT_BRANCH の先頭を取得できない"
+          fi
+          T=$head
+          cands=("$T")
+
+          src='' src_digest=''
+          for x in "${cands[@]}"; do
+            rc=0
+            d=$(inspect "$IMAGE:$TAG_PREFIX$x") || rc=$?
+            case $rc in
+              0) src=$x src_digest=$d; break ;;
+              1) ;;
+              *) fail "レジストリで $IMAGE:$TAG_PREFIX$x を確かめられない" ;;
+            esac
+          done
+          if [ -z "$src" ]; then
+            note "latest を動かさない: 指すべき版 T（$T）のイメージがまだ無い（ビルド中か、失敗した）。T の回が終われば付く。失敗していれば T の回を再実行する"
+            exit 0
+          fi
+          rc=0
+          cur=$(inspect "$IMAGE:latest") || rc=$?
+          case $rc in
+            0|1) ;;
+            *) fail "レジストリで $IMAGE:latest を確かめられない" ;;
+          esac
+          if [ "$rc" -eq 0 ] && [ "$cur" = "$src_digest" ]; then
+            note "latest はもう指すべき版を指している: $src（T=$T）"
+            exit 0
+          fi
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$TAG_PREFIX$src"
+          note "latest を動かした: $src（T=$T・main の先頭 $head）"
