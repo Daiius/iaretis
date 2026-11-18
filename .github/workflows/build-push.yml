@@ -10,11 +10,15 @@ on:
         type: boolean
         default: true
 
-# 本番の VPS は `latest` を追いかけて自動で入れ替える。同じ ref のビルドは直列にし、
-# 古いコミットのビルドがあとから `latest` を上書きしないようにする（待っている回は新しい回が来れば取り消される）。
-# 走っている回は打ち切らない: push の途中で止めると、タグの一部だけが付け替わった状態が残りうる。
+# 本番の VPS は `latest` を追いかけて自動で入れ替える。
+# 同じコミットの回（push と手動起動の重複・再実行）だけを直列にする。ほかのコミットの回は並んで走ってよい。
+# ref ごとの直列にしないのは、GitHub の待ち枠が 1 つしかなく、古い回の再実行が来ると、待っていた
+# 最新のコミットの回が取り消されて、その版に `latest` が付かないまま残るため。
+# 並んで走っても正しいのは、`latest` の判定を、ビルドと SHA のタグの push が済んだあと・付ける直前に、
+# main の先頭を取り直して行うから（下の step「Move latest」）。
+# 走っている回は打ち切らない（cancel-in-progress: false）: push の途中で止めると、半端な状態が残りうる。
 concurrency:
-  group: build-push-${{ github.ref }}
+  group: build-push-${{ github.sha }}
   cancel-in-progress: false
 
 env:
@@ -36,30 +40,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `latest`（本番が追いかけるタグ）は、main の回で、このコミットがいまのリモートの main の先頭のときだけ付ける。
-      # 古い回の再実行や、直列待ちの間に main が進んだ回が `latest` を戻さないように。
-      # paths の絞りが無く、main への push は文書だけでも毎回起動するので、先頭の回が必ず付ける（取りこぼさない）。
-      # 先頭を取れないときは安全側で付けない。結果と理由は実行の Summary に 1 行出す。
+      # ここで push するのは `<SHA>`（と main 以外の枝ではその枝の名前）だけ。
+      # `latest` は、push のあとの step「Move latest」が判定して付ける。
       - name: Generate tags
         id: tags
         run: |
           TAGS="${IMAGE_NAME}:${{ github.sha }}"
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            if HEAD_SHA=$(git ls-remote --exit-code origin refs/heads/main | cut -f1) && [ -n "$HEAD_SHA" ]; then
-              :
-            else
-              HEAD_SHA=""
-            fi
-            if [ "$HEAD_SHA" = "${{ github.sha }}" ]; then
-              TAGS="${TAGS},${IMAGE_NAME}:latest"
-              echo "latest を付ける: main の先頭（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
-            elif [ -z "$HEAD_SHA" ]; then
-              echo "latest を付けない: リモートの main の先頭を取得できない（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
-            else
-              echo "latest を付けない: main の先頭（${HEAD_SHA}）ではない（${{ github.sha }}）" | tee -a "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            echo "latest を付けない: main の回ではない（${{ github.ref_name }}）" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.ref_name }}" != "main" ]; then
             BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
             TAGS="${TAGS},${IMAGE_NAME}:${BRANCH}"
           fi
@@ -71,3 +58,54 @@ jobs:
           file: Dockerfile.prod
           push: ${{ github.ref_name == 'main' || inputs.push }}
           tags: ${{ steps.tags.outputs.tags }}
+
+      # `latest`（本番が追いかけるタグ）は、ビルドと SHA のタグの push が済んだあとで、ここで付ける。
+      # SHA のタグで push 済みのイメージに、`docker buildx imagetools create` で `latest` を付ける（作り直さない）。
+      # 付けるのは、付ける直前にリモートの main の先頭を取り直して、このコミットが先頭のときだけ。
+      # paths の絞りが無く、main への push は文書だけでも毎回起動するので、先頭の回が必ず付ける（取りこぼさない）。
+      # 古いコミットの回があとで終わっても、先頭ではないので付けない（新しい版を上書きしない）。
+      # 先頭を取れないとき・push していない回は、安全側で付けない。結果と理由は実行の Summary に出す。
+      # 残る窓: 判定してから付けるまで（数秒）の間に、より新しいコミットの回がビルドから付与までを終えると、
+      #   この回が `latest` を古い版に戻しうる（ビルドに数分かかるので起きにくい）。付けたあとでもう一度判定し、
+      #   崩れていたら警告を出す（そのときは main で手動起動し直すと、最新の版に付け直せる）。
+      - name: Move latest
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          BUILT_TAG: ${{ github.sha }}
+          PUSHED: ${{ github.ref_name == 'main' || inputs.push }}
+        run: |
+          # Actions の bash は -e -o pipefail で動く。失敗を判定に使うコマンドは if / || で受ける。
+          set -u
+          # judge: verdict（true / false）と reason を決める。exit しない（付けたあとにもう一度呼ぶ）。
+          judge() {
+            verdict=false
+            if [ "$PUSHED" != true ]; then
+              reason="イメージを push していない回"; return
+            fi
+            if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+              reason="既定の枝（$DEFAULT_BRANCH）の回ではない（$GITHUB_REF）"; return
+            fi
+            if ! head=$(git ls-remote --exit-code origin "refs/heads/$DEFAULT_BRANCH" | cut -f1) || [ -z "$head" ]; then
+              reason="リモートの $DEFAULT_BRANCH の先頭を取得できない"; return
+            fi
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              reason="$DEFAULT_BRANCH の先頭（$head）ではない（先頭の回が付ける）"; return
+            fi
+            verdict=true reason="$DEFAULT_BRANCH の先頭"
+          }
+          note() { echo "$1（${GITHUB_SHA}）" | tee -a "$GITHUB_STEP_SUMMARY"; }
+
+          judge
+          if [ "$verdict" != true ]; then
+            note "latest を付けない: $reason"
+            exit 0
+          fi
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$BUILT_TAG"
+          note "latest を付けた: $reason"
+          # 付けたあとでもう一度判定する（上の「残る窓」）。
+          judge
+          if [ "$verdict" != true ]; then
+            echo "::warning::latest を付けたあとで main が進み、この版は先頭ではなくなった: $reason"
+            note "⚠ 付けたあとの再判定で崩れた: $reason。新しいコミットの回が付けていなければ、main で手動起動し直す"
+          fi
