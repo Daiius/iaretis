@@ -42,5 +42,22 @@ async fn main() -> anyhow::Result<()> {
     let forwarder = Forwarder::new();
     let handler = IaretisHandler::new(filter, forwarder);
 
-    server::run(handler, config.listen_addr, config.doh).await
+    // PID 1（distroless のコンテナ）では、ハンドラの無い合図は無視される。
+    // SIGTERM（docker stop）と SIGINT を受けて、自分から止まる。
+    let shutdown = shutdown_signal()?;
+    server::run(handler, config.listen_addr, config.doh, shutdown).await
+}
+
+/// SIGTERM か SIGINT（Ctrl-C）で完了する Future を返す。
+/// ハンドラはここで登録する（Future を待ち始める前に届いた合図も取りこぼさない）。
+fn shutdown_signal() -> anyhow::Result<impl std::future::Future<Output = ()>> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut term = signal(SignalKind::terminate())?;
+    let mut int = signal(SignalKind::interrupt())?;
+    Ok(async move {
+        tokio::select! {
+            _ = term.recv() => tracing::info!("received SIGTERM"),
+            _ = int.recv() => tracing::info!("received SIGINT"),
+        }
+    })
 }
