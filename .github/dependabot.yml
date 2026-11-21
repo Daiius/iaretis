@@ -1,0 +1,11 @@
+# workflow の第三者の Action は、コミットの SHA で固定している（タグは付け替えられるため）。
+# その固定を新しい版へ進める PR を、Dependabot に週 1 回出させる（ほかのエコシステムの版の更新はここでは出させない）
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
