@@ -1,7 +1,7 @@
 name: CI
 
 # PR と main への push で、ビルド・テスト・clippy を流す。
-# fork からの PR でも秘密を渡さない: pull_request（pull_request_target ではない）+ 読み取りだけの権限。
+# fork からの PR でも秘密を渡さない: トリガーは下の pull_request（base の権限で動く型は使わない）+ 読み取りだけの権限。
 # cargo fmt --check は、既存コードの整形をそろえてから足す（今は差分があり落ちる）。
 
 on:
